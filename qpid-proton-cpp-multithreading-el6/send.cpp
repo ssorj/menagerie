@@ -52,7 +52,7 @@ std::mutex out_lock;
 #define OUT(x) do { std::lock_guard<std::mutex> l(out_lock); x; } while (false)
 
 // Handler for a single thread-safe sending and receiving connection.
-class client : public proton::messaging_handler {
+class send_handler : public proton::messaging_handler {
   // Invariant
   const std::string url_;
   const std::string address_;
@@ -68,16 +68,16 @@ class client : public proton::messaging_handler {
   std::condition_variable messages_ready_;
 
 public:
-  client(const std::string& url, const std::string& address) : url_(url), address_(address), work_queue_(0) {}
+  send_handler(const std::string& url, const std::string& address) : url_(url), address_(address), work_queue_(0) {}
 
   // Thread safe
   void send(const proton::message& msg) {
-    work_queue()->add(make_work(&client::send_fn, this, msg));
+    work_queue()->add(make_work(&send_handler::send_fn, this, msg));
   }
 
   // Thread safe
   void close() {
-    work_queue()->add(make_work(&client::close_fn, this));
+    work_queue()->add(make_work(&send_handler::close_fn, this));
   }
 
 private:
@@ -111,10 +111,6 @@ private:
     conn.open_receiver(address_);
   }
 
-  //void on_connection_close(proton::connection& conn) {
-  //  OUT(std::cerr << "Connection closing" << std::endl);
-  //}
-
   void on_sender_open(proton::sender& s) {
     // sender_ and work_queue_ must be set atomically
     std::lock_guard<std::mutex> l(lock_);
@@ -143,21 +139,21 @@ int main(int argc, const char** argv) {
     const char *address = argv[2];
     int n_messages = atoi(argv[3]);
 
-    client cl(url, address);
-    proton::container container(cl);
+    send_handler handler(url, address);
+    proton::container container(handler);
     std::thread container_thread([&]() { container.run(); });
 
     std::thread sender([&]() {
         for (int i = 0; i < n_messages; ++i) {
           proton::message msg(std::to_string(i + 1));
-          cl.send(msg);
-          OUT(std::cout << "sent \"" << msg.body() << '"' << std::endl);
+          handler.send(msg);
+          OUT(std::cout << "Sent \"" << msg.body() << '"' << std::endl);
         }
       });
 
 
     sender.join();
-    cl.close();
+    handler.close();
     container_thread.join();
 
     return 0;
