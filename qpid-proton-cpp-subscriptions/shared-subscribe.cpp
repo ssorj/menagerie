@@ -32,20 +32,13 @@
 #include <iostream>
 #include <string>
 
-// The identity of the subscriber is the combination of container id
-// and link (i.e. receiver) name
-//
-// - Set container id
-// - Create receiver with link name, topic as source address, source is durable, and expiry_policy never
-// - Use receiver.detach(), then close the connection
-
-struct subscription_handler : public proton::messaging_handler {
+// The identity of the subscriber is the combination of container ID
+// and link name (in this case, receiver name).
+struct subscribe_handler : public proton::messaging_handler {
     std::string conn_url_ {};
     std::string address_ {};
     int count_ {0};
-
     int received_ {0};
-    bool stopping_ {false};
 
     void on_container_start(proton::container& cont) override {
         cont.connect(conn_url_);
@@ -55,40 +48,42 @@ struct subscription_handler : public proton::messaging_handler {
         proton::receiver_options opts {};
         proton::source_options sopts {};
 
-        opts.name("sub0"); // A stable name
-        sopts.durability_mode(proton::source::UNSETTLED_STATE);
-        sopts.expiry_policy(proton::source::NEVER);
+        std::vector<proton::symbol> caps {
+            "shared",
+            "global" // Global means shared across clients (container IDs)
+        };
+        
+        sopts.capabilities(caps);
+
+        opts.name("sub-1"); // A stable name
         opts.source(sopts);
         
         conn.open_receiver(address_, opts);
     }
 
     void on_receiver_open(proton::receiver& rcv) override {
-        std::cout << "RECEIVE: Opened receiver for source address '" << address_ << "'\n";
+        std::cout << "SUBSCRIBE: Opened receiver for source address '" << address_ << "'\n";
     }
 
     void on_message(proton::delivery& dlv, proton::message& msg) override {
-        if (stopping_) return;
-
-        std::cout << "RECEIVE: Received message '" << msg.body() << "'" << std::endl;
+        std::cout << "SUBSCRIBE: Received message '" << msg.body() << "'\n";
 
         received_++;
 
         if (received_ == count_) {
-            dlv.receiver().detach(); // Detaching leaves the subscription intact (unclosed)
+            dlv.receiver().close();
             dlv.connection().close();
-            stopping_ = true;
         }
     }
 };
 
 int main(int argc, char** argv) {
     if (argc != 3 && argc != 4) {
-        std::cerr << "Usage: receive CONNECTION-URL ADDRESS [COUNT]\n";
+        std::cerr << "Usage: <prog> CONNECTION-URL ADDRESS [COUNT]\n";
         return 1;
     }
 
-    subscription_handler handler {};
+    subscribe_handler handler {};
     handler.conn_url_ = argv[1];
     handler.address_ = argv[2];
 
@@ -96,7 +91,7 @@ int main(int argc, char** argv) {
         handler.count_ = std::stoi(argv[3]);
     }
 
-    proton::container cont {handler, "example-app-1"};
+    proton::container cont {handler, "app-1"};
 
     try {
         cont.run();
