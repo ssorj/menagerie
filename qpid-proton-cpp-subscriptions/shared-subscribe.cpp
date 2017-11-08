@@ -50,12 +50,12 @@ struct subscribe_handler : public proton::messaging_handler {
 
         std::vector<proton::symbol> caps {
             "shared",
-            "global" // Global means shared across clients (container IDs)
+            "global" // Global means shared across clients (distinct container IDs)
         };
         
         sopts.capabilities(caps);
 
-        opts.name("sub-1"); // A stable name
+        opts.name("sub-1"); // A stable link name
         opts.source(sopts);
         
         conn.open_receiver(address_, opts);
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
         handler.count_ = std::stoi(argv[3]);
     }
 
-    proton::container cont {handler, "app-1"};
+    proton::container cont {handler, "app-1"}; // A stable container ID
 
     try {
         cont.run();
