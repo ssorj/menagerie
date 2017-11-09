@@ -32,12 +32,10 @@
 #include <iostream>
 #include <string>
 
-// The identity of the subscriber is the combination of container ID
-// and link name (in this case, receiver name).
 struct subscribe_handler : public proton::messaging_handler {
     std::string conn_url_ {};
     std::string address_ {};
-    int count_ {0};
+    int desired_ {0};
     int received_ {0};
 
     void on_container_start(proton::container& cont) override {
@@ -49,6 +47,7 @@ struct subscribe_handler : public proton::messaging_handler {
         proton::source_options sopts {};
 
         std::vector<proton::symbol> caps {
+            "topic",
             "shared",
             "global" // Global means shared across clients (distinct container IDs)
         };
@@ -70,7 +69,7 @@ struct subscribe_handler : public proton::messaging_handler {
 
         received_++;
 
-        if (received_ == count_) {
+        if (received_ == desired_) {
             dlv.receiver().close();
             dlv.connection().close();
         }
@@ -88,7 +87,7 @@ int main(int argc, char** argv) {
     handler.address_ = argv[2];
 
     if (argc == 4) {
-        handler.count_ = std::stoi(argv[3]);
+        handler.desired_ = std::stoi(argv[3]);
     }
 
     proton::container cont {handler, "app-1"}; // A stable container ID
