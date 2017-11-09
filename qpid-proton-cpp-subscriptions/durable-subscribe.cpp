@@ -68,7 +68,6 @@ struct subscription_handler : public proton::messaging_handler {
 
         if (received_ == count_) {
             dlv.receiver().detach(); // Detaching leaves the subscription intact
-            dlv.receiver().close();
             dlv.connection().close();
         }
     }
