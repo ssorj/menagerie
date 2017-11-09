@@ -32,8 +32,6 @@
 #include <iostream>
 #include <string>
 
-// The identity of the subscriber is the combination of container ID
-// and link name (in this case, receiver name).
 struct subscribe_handler : public proton::messaging_handler {
     std::string conn_url_ {};
     std::string address_ {};
@@ -48,7 +46,11 @@ struct subscribe_handler : public proton::messaging_handler {
         proton::receiver_options opts {};
         proton::source_options sopts {};
 
-        std::vector<proton::symbol> caps {"topic"};
+        std::vector<proton::symbol> caps {
+            "topic",
+            "shared",
+            "global" // Global means shared across clients (distinct container IDs)
+        };
 
         sopts.capabilities(caps);
         sopts.durability_mode(proton::source::UNSETTLED_STATE);
