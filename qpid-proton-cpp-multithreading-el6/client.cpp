@@ -17,9 +17,6 @@
  * under the License.
  */
 
-//
-// C++11 or greater
-//
 // A multi-threaded client that calls proton::container::run() in one thread, sends
 // messages in another and receives messages in a third.
 //
@@ -52,7 +49,7 @@ std::mutex out_lock;
 #define OUT(x) do { std::lock_guard<std::mutex> l(out_lock); x; } while (false)
 
 // Handler for a single thread-safe sending and receiving connection.
-class send_handler : public proton::messaging_handler {
+class client : public proton::messaging_handler {
   // Invariant
   const std::string url_;
   const std::string address_;
@@ -68,22 +65,32 @@ class send_handler : public proton::messaging_handler {
   std::condition_variable messages_ready_;
 
 public:
-  send_handler(const std::string& url, const std::string& address) : url_(url), address_(address), work_queue_(0) {}
+  client(const std::string& url, const std::string& address) : url_(url), address_(address), work_queue_(0) {}
 
   // Thread safe
   void send(const proton::message& msg) {
-    work_queue()->add(make_work(&send_handler::send_fn, this, msg));
+    work_queue()->add(make_work(&client::send_fn, this, msg));
+  }
+
+  proton::message receive() {
+    std::unique_lock<std::mutex> l {lock_};
+    while (messages_.empty()) messages_ready_.wait(l);
+
+    auto msg = std::move(messages_.front());
+    messages_.pop();
+
+    return msg;
   }
 
   // Thread safe
   void close() {
-    work_queue()->add(make_work(&send_handler::close_fn, this));
+    work_queue()->add(make_work(&client::close_fn, this));
   }
 
 private:
   proton::work_queue* work_queue() {
     // Wait till work_queue_ and sender_ are initialized.
-    std::unique_lock<std::mutex> l(lock_);
+    std::unique_lock<std::mutex> l {lock_};
     while (!work_queue_) sender_ready_.wait(l);
     return work_queue_;
   }
@@ -98,11 +105,7 @@ private:
 
   // == messaging_handler overrides, only called in proton hander thread
 
-  // Note: this example creates a connection when the container starts.
-  // To create connections after the container has started, use
-  // container::connect().
-  // See @ref multithreaded_client_flow_control.cpp for an example.
-  void on_container_start(proton::container& cont) override {
+  void on_container_start(proton::container& cont) {
     cont.connect(url_);
   }
 
@@ -111,19 +114,44 @@ private:
     conn.open_receiver(address_);
   }
 
-  void on_sender_open(proton::sender& s) {
+  void on_sender_open(proton::sender& snd) {
     // sender_ and work_queue_ must be set atomically
-    std::lock_guard<std::mutex> l(lock_);
-    sender_ = s;
-    work_queue_ = &s.work_queue();
+    std::lock_guard<std::mutex> l {lock_};
+    sender_ = snd;
+    work_queue_ = &snd.work_queue();
     sender_ready_.notify_all();
   }
 
+  void on_message(proton::delivery& dlv, proton::message& msg) {
+      std::lock_guard<std::mutex> l {lock_};
+    messages_.push(msg);
+    messages_ready_.notify_all();
+  }
+
   void on_error(const proton::error_condition& e) {
-    OUT(std::cerr << "unexpected error: " << e << std::endl);
+    OUT(std::cerr << "Unexpected error: " << e << "\n");
     exit(1);
   }
 };
+
+void run_container(proton::container* container) {
+  container->run();
+};
+
+void run_sender(client* cl, int count) {
+  for (int i = 0; i < count; i++) {
+    proton::message msg {"hello"};
+    cl->send(msg);
+    OUT(std::cout << "Sent \"" << msg.body() << "\"\n");
+  }
+}
+
+void run_receiver(client* cl, int count) {
+  for (int i = 0; i < count; ++i) {
+    auto msg = cl->receive();
+    OUT(std::cout << "Received \"" << msg.body() << "\"\n");
+  }
+}
 
 int main(int argc, const char** argv) {
   try {
@@ -132,33 +160,29 @@ int main(int argc, const char** argv) {
         "Usage: " << argv[0] << " CONNECTION-URL AMQP-ADDRESS MESSAGE-COUNT\n"
                 "CONNECTION-URL: connection address, e.g.'amqp://127.0.0.1'\n"
                 "AMQP-ADDRESS: AMQP node address, e.g. 'examples'\n"
-        "MESSAGE-COUNT: number of messages to send\n";
+                "MESSAGE-COUNT: number of messages to send\n";
       return 1;
     }
-    const char *url = argv[1];
-    const char *address = argv[2];
-    int n_messages = atoi(argv[3]);
 
-    send_handler handler(url, address);
-    proton::container container(handler);
-    std::thread container_thread([&]() { container.run(); });
+    const char* url = argv[1];
+    const char* address = argv[2];
+    int count = atoi(argv[3]);
 
-    std::thread sender([&]() {
-        for (int i = 0; i < n_messages; ++i) {
-          proton::message msg(std::to_string(i + 1));
-          handler.send(msg);
-          OUT(std::cout << "Sent \"" << msg.body() << '"' << std::endl);
-        }
-      });
+    client cl(url, address);
+    proton::container container(cl);
 
+    std::thread container_thread(run_container, &container);
+    std::thread sender_thread(run_sender, &cl, count);
+    std::thread receiver_thread(run_receiver, &cl, count);
 
-    sender.join();
-    handler.close();
+    sender_thread.join();
+    receiver_thread.join();
+    cl.close();
     container_thread.join();
 
     return 0;
   } catch (const std::exception& e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << e.what() << "\n";
   }
 
   return 1;
