@@ -65,13 +65,15 @@ class client : public proton::messaging_handler {
   std::condition_variable messages_ready_;
 
 public:
-  client(const std::string& url, const std::string& address) : url_(url), address_(address), work_queue_(0) {}
+  client(const std::string& url, const std::string& address)
+      : url_(url), address_(address), work_queue_(0) {}
 
   // Thread safe
   void send(const proton::message& msg) {
     work_queue()->add(make_work(&client::send_fn, this, msg));
   }
 
+  // Thread safe
   proton::message receive() {
     std::unique_lock<std::mutex> l {lock_};
     while (messages_.empty()) messages_ready_.wait(l);
@@ -103,7 +105,7 @@ private:
     sender_.connection().close();
   }
 
-  // == messaging_handler overrides, only called in proton hander thread
+  // messaging_handler overrides, only called in proton hander thread
 
   void on_container_start(proton::container& cont) {
     cont.connect(url_);
@@ -134,22 +136,22 @@ private:
   }
 };
 
-void run_container(proton::container* container) {
-  container->run();
+void run_container(proton::container* cont) {
+  cont->run();
 };
 
 void run_sender(client* cl, int count) {
   for (int i = 0; i < count; i++) {
     proton::message msg {"hello"};
     cl->send(msg);
-    OUT(std::cout << "Sent \"" << msg.body() << "\"\n");
+    OUT(std::cout << "Sent '" << msg.body() << "'\n");
   }
 }
 
 void run_receiver(client* cl, int count) {
   for (int i = 0; i < count; ++i) {
     auto msg = cl->receive();
-    OUT(std::cout << "Received \"" << msg.body() << "\"\n");
+    OUT(std::cout << "Received '" << msg.body() << "'\n");
   }
 }
 
@@ -168,8 +170,8 @@ int main(int argc, const char** argv) {
     const char* address = argv[2];
     int count = atoi(argv[3]);
 
-    client cl(url, address);
-    proton::container container(cl);
+    client cl {url, address};
+    proton::container container {cl};
 
     std::thread container_thread(run_container, &container);
     std::thread sender_thread(run_sender, &cl, count);
